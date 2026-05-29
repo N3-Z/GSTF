@@ -1,0 +1,17 @@
+# GSTF - gRPC Security Testing Framework
+# Install: pip install -r requirements.txt
+
+# gRPC core & proto compiler
+grpcio>=1.59.0
+grpcio-tools>=1.59.0
+protobuf>=4.24.4
+
+# Payload & config
+PyYAML>=6.0.1
+
+# Excel report output
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# Optional: AI-assisted test data generation (core/gpt.py)
+# openai>=1.0.0

@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package auth;
+
+service AuthenticationService {
+    // Login method
+    rpc Login(LoginRequest) returns (LoginResponse);
+    
+    // Signup method
+    rpc Signup(SignupRequest) returns (SignupResponse);
+    
+    // Token verification method
+    rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+}
+
+// Request message for login
+message LoginRequest {
+    string username = 1;
+    string password = 2;
+}
+
+// Response message for login
+message LoginResponse {
+    string token = 1;
+    string message = 2;
+}
+
+// Request message for signup
+message SignupRequest {
+    string username = 1;
+    string password = 2;
+    string email = 3;
+}
+
+// Response message for signup
+message SignupResponse {
+    string message = 1;
+}
+
+// Request message for token verification
+message VerifyTokenRequest {
+    string token = 1;
+}
+
+// Response message for token verification
+message VerifyTokenResponse {
+    bool valid = 1;
+    string message = 2;
+}

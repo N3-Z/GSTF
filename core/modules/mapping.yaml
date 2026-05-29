@@ -1,0 +1,18 @@
+int:
+  - business_logic
+double:
+  - business_logic
+string:
+  - sqli
+  - xss
+  - lfi
+  - ssrf
+  - rce
+  - xpath_injection
+  - command_injection
+  - ldap_injection
+  - nosql_injection
+  - ssti
+  - xxe
+  - format_string
+  - crlf_injection
