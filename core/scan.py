@@ -372,8 +372,9 @@ def generate_excel_result(results, meta):
 async def create_request(stub, module, method_name, service, data, excepted_resp, exclude_resp,
                          attack_title, vulnerable_param, payload_param, metadata,
                          index, total, quiet, time_threshold, baseline_ms, timeout):
-    output   = None
-    rpc_code = 0
+    output       = None
+    rpc_code     = 0
+    error_detail = ""
 
     t0 = time.time()
     try:
@@ -383,10 +384,18 @@ async def create_request(stub, module, method_name, service, data, excepted_resp
         output = grpc_module.getDataResult(resp)
     except grpc.RpcError as e:
         rpc_code = e.code()
-        output   = str(e.details())
+        # e.details() is often empty for transport-level failures (e.g. a bad
+        # 'content-type' header from a non-gRPC gateway). The root cause lives in
+        # debug_error_string(), so capture both and fall back when details is blank.
+        try:    details = e.details() or ""
+        except Exception: details = ""
+        try:    error_detail = e.debug_error_string() or ""
+        except Exception: error_detail = ""
+        output = details if details else error_detail
     except Exception as e:
-        rpc_code = "UNKNOWN"
-        output   = str(e)
+        rpc_code     = "UNKNOWN"
+        output       = str(e)
+        error_detail = str(e)
     elapsed_ms = (time.time() - t0) * 1000
 
     output_str = str(output).lower()
@@ -454,6 +463,7 @@ async def create_request(stub, module, method_name, service, data, excepted_resp
         'RPC_status':           "Error" if rpc_code != 0 else "Success",
         'Payload':              payload_param,
         'Response':             output,
+        'Error_Detail':         error_detail,
         'Attack_title':         attack_title,
         'Service':              service,
         'Vulnerable_param':     vulnerable_param,
