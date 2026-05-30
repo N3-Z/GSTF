@@ -108,6 +108,24 @@ def get_all_class_stubs(filename):
     return stubs
 
 
+def get_service_methods(gs_service_module):
+    """Return [{method_name, input_type, service_name, stub}] from the protobuf DESCRIPTOR.
+
+    Replaces the fragile convention of stripping 'Request' from a message class name to
+    guess the RPC name. Reads actual RPC definitions, so it works for any naming scheme
+    (e.g. GetSession(TokenAuthorizationRequest))."""
+    methods = []
+    for svc_name, svc_desc in gs_service_module.DESCRIPTOR.services_by_name.items():
+        for method in svc_desc.methods:
+            methods.append({
+                'method_name':  method.name,
+                'input_type':   method.input_type.name,
+                'service_name': svc_name,
+                'stub':         None,
+            })
+    return methods
+
+
 def get_request_variable_names(request_type):
     return [field.name for field in request_type.DESCRIPTOR.fields]
 

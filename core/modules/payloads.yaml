@@ -71,6 +71,7 @@ payload:
     # Reflection detection is bypassed for XSS (see scan.py).
     # Only exclude responses that confirm the payload was HTML-encoded (safe)
     # or explicitly rejected — those are NOT vulnerable.
+    # do not update the exclude
     exclude:
       - "&lt;script&gt;"
       - "&#60;script&#62;"

@@ -76,20 +76,17 @@ def _confidence_label(score):
 
 # ── Auth Flow ──────────────────────────────────────────────────────────────────
 
-async def _run_auth_flow(stub_map, gs_service, auth_rpc, auth_data, auth_field,
+async def _run_auth_flow(methods, gs_service, auth_rpc, auth_data, auth_field,
                          auth_header, timeout):
-    """Fix #2: uses stub_map to find the correct stub for the auth RPC."""
-    service_name = auth_rpc + "Request"
-    stub = stub_map.get(service_name)
-    if stub is None:
-        print(f"  {RED}[!] '{service_name}' not found in proto{RESET}")
+    """Run an auth RPC by method name, extract the token, return it as gRPC metadata."""
+    target = next((m for m in methods if m['method_name'].lower() == auth_rpc.lower()), None)
+    if target is None or target['stub'] is None:
+        available = ", ".join(m['method_name'] for m in methods)
+        print(f"  {RED}[!] Auth RPC '{auth_rpc}' not found. Available: {available}{RESET}")
         return None
 
-    try:
-        module = getattr(gs_service, service_name)
-    except AttributeError:
-        print(f"  {RED}[!] Message class '{service_name}' not found{RESET}")
-        return None
+    stub   = target['stub']
+    module = getattr(gs_service, target['input_type'])
 
     data = {k: v for k, v in (auth_data or [])}
     for field_name in grpc_module.get_request_variable_names(module):
@@ -98,7 +95,7 @@ async def _run_auth_flow(stub_map, gs_service, auth_rpc, auth_data, auth_field,
             data[field_name] = grpc_module.generate_data(vt)
 
     try:
-        request = getattr(stub, auth_rpc)
+        request = getattr(stub, target['method_name'])
         resp    = await request(module(**data), metadata=None, timeout=timeout)
         result  = grpc_module.getDataResult(resp)
     except grpc.RpcError as e:
@@ -150,7 +147,7 @@ async def _measure_baselines(test_plan, metadata, timeout, samples=3):
         for _ in range(samples):
             t0 = time.time()
             try:
-                req  = getattr(stub, service.split("Request")[0])
+                req  = getattr(stub, tc['method_name'])
                 await req(module(**default_data), metadata=metadata, timeout=timeout)
             except Exception:
                 pass
@@ -158,31 +155,33 @@ async def _measure_baselines(test_plan, metadata, timeout, samples=3):
 
         baseline = sum(times) / len(times)
         baselines[service] = baseline
-        print(f"  -> {service.replace('Request','')}: baseline {baseline:.0f} ms")
+        print(f"  -> {service}: baseline {baseline:.0f} ms")
 
     return baselines
 
 
 # ── Test Plan ──────────────────────────────────────────────────────────────────
 
-def _build_test_plan(request_classes, gs_service, temp_payloads, stub_map,
+def _build_test_plan(methods, gs_service, temp_payloads,
                      attacks_filter=None, services_filter=None,
                      payloads_path='./core/modules/payloads.yaml'):
-    """Phase 3: build flat list of test cases with filters applied."""
+    """Phase 3: build flat list of test cases, one per (method, param, attack, payload)."""
     test_cases    = []
     norm_attacks  = [a.lower() for a in attacks_filter]  if attacks_filter  else None
     norm_services = [s.lower() for s in services_filter] if services_filter else None
 
-    for service in request_classes:
-        if norm_services and service.replace("Request", "").lower() not in norm_services:
-            continue
+    for m in methods:
+        method_name = m['method_name']
+        stub        = m['stub']
 
-        stub = stub_map.get(service)
+        # --service filter matches the RPC method name (e.g. GetSession)
+        if norm_services and method_name.lower() not in norm_services:
+            continue
         if stub is None:
-            print(f"  {DIM}[!] No stub for '{service}', skipping{RESET}")
+            print(f"  {DIM}[!] No stub found for method '{method_name}', skipping{RESET}")
             continue
 
-        module       = getattr(gs_service, service)
+        module       = getattr(gs_service, m['input_type'])
         param_names  = grpc_module.get_request_variable_names(module)
         default_data = {
             key: grpc_module.generate_data(
@@ -196,7 +195,7 @@ def _build_test_plan(request_classes, gs_service, temp_payloads, stub_map,
             if var_type == 'bool':
                 continue
             if var_type is None:
-                print(f"  {DIM}[!] Unsupported field type for '{item}' in {service}{RESET}")
+                print(f"  {DIM}[!] Unsupported field type for '{item}' in {method_name}{RESET}")
                 continue
 
             # Fix #10: specific exception handling instead of silent swallow
@@ -223,7 +222,8 @@ def _build_test_plan(request_classes, gs_service, temp_payloads, stub_map,
                     test_data       = copy.copy(default_data)
                     test_data[item] = combined
                     test_cases.append({
-                        'service':        service,
+                        'service':        method_name,   # display & grouping key = RPC method
+                        'method_name':    method_name,
                         'stub':           stub,
                         'module':         module,
                         'param_names':    param_names,
@@ -369,7 +369,7 @@ def generate_excel_result(results, meta):
 
 # ── Request Execution ──────────────────────────────────────────────────────────
 
-async def create_request(stub, module, service, data, excepted_resp, exclude_resp,
+async def create_request(stub, module, method_name, service, data, excepted_resp, exclude_resp,
                          attack_title, vulnerable_param, payload_param, metadata,
                          index, total, quiet, time_threshold, baseline_ms, timeout):
     output   = None
@@ -377,7 +377,7 @@ async def create_request(stub, module, service, data, excepted_resp, exclude_res
 
     t0 = time.time()
     try:
-        request = getattr(stub, service.split("Request")[0])
+        request = getattr(stub, method_name)
         # Fix #1: enforce per-request timeout
         resp   = await request(module(**data), metadata=metadata, timeout=timeout)
         output = grpc_module.getDataResult(resp)
@@ -464,31 +464,33 @@ async def create_request(stub, module, service, data, excepted_resp, exclude_res
 # ── Stub Builder ───────────────────────────────────────────────────────────────
 
 def generate_stub(url, pathname, secure, proxy=None):
-    """Fix #2: build stub_map supporting multiple services in one proto file."""
+    """Build a list of RPC methods, each bound to the stub that owns it.
+
+    Method-centric (uses protobuf DESCRIPTOR), so RPC method names do NOT need to
+    match request message names. Correctly handles protos where one request message
+    is shared by multiple RPCs (e.g. GetSession & GetAgrabaSession share
+    TokenAuthorizationRequest)."""
     module_name = grpc_module.loadProto(pathname)
     base_name   = module_name.split('.')[0]
 
     gs_service = grpc_module.import_proto_module(f'{base_name}_pb2')
     gm_service = grpc_module.import_proto_module(f'{base_name}_pb2_grpc')
 
-    request_classes = grpc_module.get_request_class_name(f'{base_name}_pb2')
-    stub_names      = grpc_module.get_all_class_stubs(f'{base_name}_pb2_grpc')
-
-    all_stubs = [
+    stub_names = grpc_module.get_all_class_stubs(f'{base_name}_pb2_grpc')
+    all_stubs  = [
         grpc_module.getStub(url=url, message_stub=getattr(gm_service, sn),
                             secure=secure, proxy=proxy)
         for sn in stub_names
     ]
 
-    stub_map = {}
-    for rc in request_classes:
-        method = rc.split("Request")[0]
+    methods = grpc_module.get_service_methods(gs_service)
+    for m in methods:
         for stub in all_stubs:
-            if hasattr(stub, method):
-                stub_map[rc] = stub
+            if hasattr(stub, m['method_name']):
+                m['stub'] = stub
                 break
 
-    return stub_map, request_classes, gs_service
+    return methods, gs_service
 
 
 # ── Main Scan ──────────────────────────────────────────────────────────────────
@@ -532,16 +534,16 @@ async def start_scan(
     # Phase 2: Code Generation
     print(f"{BOLD}[PHASE 2]{RESET} Compiling proto & generating stub...")
     t0 = time.time()
-    stub_map, request_classes, gs_service = generate_stub(url, pathname, secure, proxy=proxy)
+    methods, gs_service = generate_stub(url, pathname, secure, proxy=proxy)
     init_ms    = int((time.time() - t0) * 1000)
-    svc_labels = ", ".join(r.replace("Request", "") for r in request_classes)
-    print(f"  -> Done in {init_ms} ms | Services: {svc_labels}\n")
+    svc_labels = ", ".join(m['method_name'] for m in methods)
+    print(f"  -> Done in {init_ms} ms | RPC methods: {svc_labels}\n")
 
     # Auth Flow (optional)
     if auth_rpc:
         print(f"{BOLD}[AUTH]  {RESET} Running authentication flow ({auth_rpc})...")
         acquired = await _run_auth_flow(
-            stub_map, gs_service, auth_rpc, auth_data, auth_field, auth_header, timeout
+            methods, gs_service, auth_rpc, auth_data, auth_field, auth_header, timeout
         )
         if acquired:
             metadata = (list(metadata) if metadata else []) + acquired
@@ -552,7 +554,7 @@ async def start_scan(
     # Phase 3: Test Case Creation
     print(f"{BOLD}[PHASE 3]{RESET} Building test cases...")
     test_plan = _build_test_plan(
-        request_classes, gs_service, temp_payloads, stub_map,
+        methods, gs_service, temp_payloads,
         attacks_filter=attacks_filter, services_filter=services_filter,
         payloads_path=payloads_path,
     )
@@ -562,7 +564,17 @@ async def start_scan(
         filter_note += f" | attacks: {', '.join(attacks_filter)}"
     if services_filter:
         filter_note += f" | services: {', '.join(services_filter)}"
-    print(f"  -> {total} test cases across {len(request_classes)} services{filter_note}\n")
+    print(f"  -> {total} test cases across {len(methods)} RPC methods{filter_note}\n")
+
+    if total == 0:
+        print(f"  {YELLOW}[!] No test cases generated. Possible causes:{RESET}")
+        print(f"  {DIM}    - target RPCs have no string/int/double fields to fuzz{RESET}")
+        print(f"  {DIM}    - --attack / --service filters excluded everything{RESET}")
+        print(f"  {DIM}    - no stub could be matched to the RPC methods{RESET}\n")
+        return {
+            'total': 0, 'executed': 0, 'skipped': 0,
+            'vulnerable': 0, 'unique': 0, 'report': None,
+        }
 
     if delay_ms > 0:
         print(f"  {DIM}[i] Delay: {delay_ms}ms/req "
@@ -623,7 +635,7 @@ async def start_scan(
             continue
 
         result = await create_request(
-            stub=tc['stub'], module=tc['module'], service=service,
+            stub=tc['stub'], module=tc['module'], method_name=tc['method_name'], service=service,
             data=tc['test_data'], excepted_resp=tc['excepted_resp'],
             exclude_resp=tc['exclude_resp'], attack_title=tc['attack'].upper(),
             vulnerable_param=tc['param'], payload_param=tc['payload_param'],
