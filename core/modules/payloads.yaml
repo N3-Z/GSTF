@@ -68,11 +68,14 @@ payload:
       - "onload=alert"
       - "<img src=x"
       - "javascript:alert"
+    # Reflection detection is bypassed for XSS (see scan.py).
+    # Only exclude responses that confirm the payload was HTML-encoded (safe)
+    # or explicitly rejected — those are NOT vulnerable.
     exclude:
-      # Server echoing payload back in a plain error message is not true XSS
-      - "already exists"
-      - "Invalid input"
-      - "not allowed"
+      - "&lt;script&gt;"
+      - "&#60;script&#62;"
+      - "sanitized"
+      - "invalid characters"
     time: 0
 
   # ── Local File Inclusion (LFI) ─────────────────────────────────────────────

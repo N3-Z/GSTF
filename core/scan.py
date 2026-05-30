@@ -393,7 +393,11 @@ async def create_request(stub, module, service, data, excepted_resp, exclude_res
     matches    = [item for item in excepted_resp if str(item).lower() in output_str]
     is_vulnerable = bool(matches)
 
-    if is_vulnerable:
+    # Reflection detection: skip if every resp match is found within the payload itself,
+    # meaning the server just echoed the input back in an error message.
+    # Exception: XSS — payload reflection in a response IS the vulnerability
+    # because a browser rendering that response would execute the script.
+    if is_vulnerable and attack_title.lower() != 'xss':
         payload_lower = str(payload_param).lower()
         if all(str(m).lower() in payload_lower for m in matches):
             is_vulnerable = False
