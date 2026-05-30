@@ -48,6 +48,7 @@ payload:
       - "Login successful"
       - "Registration successful"
     time: 4
+    attemp_success: 2
 
   # ── Cross-Site Scripting (XSS) ─────────────────────────────────────────────
   # Relevant if gRPC responses are consumed by a web UI that renders HTML.
@@ -78,6 +79,8 @@ payload:
       - "sanitized"
       - "invalid characters"
     time: 0
+    attemp_success: 2
+
 
   # ── Local File Inclusion (LFI) ─────────────────────────────────────────────
   lfi:
@@ -110,6 +113,8 @@ payload:
       - "Permission denied"
       - "No such file"
     time: 0
+    attemp_success: 2
+
 
   # ── Server-Side Request Forgery (SSRF) ─────────────────────────────────────
   ssrf:
@@ -135,6 +140,8 @@ payload:
       # File access via SSRF
       - "root:x:0:0"
     time: 0
+    attemp_success: 2
+
 
   # ── Remote Code Execution (RCE) ────────────────────────────────────────────
   rce:
@@ -162,6 +169,8 @@ payload:
       - "Unauthorized"
       - "Authentication failed"
     time: 0
+    attemp_success: 2
+
 
   # ── XPath Injection ────────────────────────────────────────────────────────
   xpath_injection:
@@ -182,6 +191,8 @@ payload:
       - "javax.xml.xpath"
       - "XPathExpressionException"
     time: 0
+    attemp_success: 2
+
 
   # ── Command Injection ──────────────────────────────────────────────────────
   command_injection:
@@ -210,6 +221,8 @@ payload:
       - "not allowed"
       - "blocked"
     time: 4
+    attemp_success: 2
+
 
   # ── LDAP Injection ─────────────────────────────────────────────────────────
   ldap_injection:
@@ -230,6 +243,8 @@ payload:
       - "com.sun.jndi.ldap"
       - "org.springframework.ldap"
     time: 0
+    attemp_success: 2
+
 
   # ── NoSQL Injection ────────────────────────────────────────────────────────
   nosql_injection:
@@ -251,6 +266,8 @@ payload:
       - "BSONTypeError"
       - "E11000 duplicate key"
     time: 0
+    attemp_success: 2
+
 
   # ── Server-Side Template Injection (SSTI) ──────────────────────────────────
   ssti:
@@ -280,6 +297,8 @@ payload:
       - "port 49"
       - "id: 49"
     time: 0
+    attemp_success: 2
+
 
   # ── XML External Entity (XXE) ──────────────────────────────────────────────
   xxe:
@@ -298,6 +317,8 @@ payload:
       - "ExternalEntityException"
       - "XMLParseError"
     time: 0
+    attemp_success: 2
+
 
   # ── Format String Injection ────────────────────────────────────────────────
   # For gRPC services backed by C/C++ or native libraries.
@@ -324,6 +345,8 @@ payload:
       - "runtime goroutine"
       - "ValueError"
     time: 0
+    attemp_success: null
+
 
   # ── CRLF Injection ─────────────────────────────────────────────────────────
   # For gRPC services that generate HTTP responses or write logs from input.
@@ -348,6 +371,8 @@ payload:
       - "test\r\n"
       - "test%0d%0a"
     time: 0
+    attemp_success: 2
+
 
   # ── Business Logic ─────────────────────────────────────────────────────────
   business_logic:
@@ -366,3 +391,5 @@ payload:
       - "exceeds maximum"
       - "below minimum"
     time: 0
+    attemp_success: null
+

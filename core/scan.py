@@ -74,6 +74,33 @@ def _confidence_label(score):
     return "Low"
 
 
+def _resolve_attempt_limit(attack_data, default):
+    """Resolve the per-attack early-exit threshold from payloads.yaml.
+
+    'attemp_success' in the YAML controls how many successful (vulnerable) payloads
+    to find before skipping the rest of that attack's payloads:
+      - none / null / empty  -> None (unlimited: every payload is tested)
+      - a positive integer N -> stop after N vulnerable payloads
+    Note: YAML parses a bare `none` as the string "none", so it is handled explicitly.
+    Falls back to `default` when the key is absent."""
+    if 'attemp_success' in attack_data:
+        val = attack_data['attemp_success']
+    elif 'attempt_success' in attack_data:   # tolerate the correctly-spelled variant
+        val = attack_data['attempt_success']
+    else:
+        val = default
+
+    if val is None:
+        return None
+    if isinstance(val, str) and val.strip().lower() in ('none', 'null', '', 'unlimited'):
+        return None
+    try:
+        n = int(val)
+        return n if n > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 # ── Auth Flow ──────────────────────────────────────────────────────────────────
 
 async def _run_auth_flow(methods, gs_service, auth_rpc, auth_data, auth_field,
@@ -164,7 +191,8 @@ async def _measure_baselines(test_plan, metadata, timeout, samples=3):
 
 def _build_test_plan(methods, gs_service, temp_payloads,
                      attacks_filter=None, services_filter=None,
-                     payloads_path='./core/modules/payloads.yaml'):
+                     payloads_path='./core/modules/payloads.yaml',
+                     default_attempt=2):
     """Phase 3: build flat list of test cases, one per (method, param, attack, payload)."""
     test_cases    = []
     norm_attacks  = [a.lower() for a in attacks_filter]  if attacks_filter  else None
@@ -213,6 +241,7 @@ def _build_test_plan(methods, gs_service, temp_payloads,
             for attack, attack_data in attack_payloads.items():
                 if norm_attacks and attack.lower() not in norm_attacks:
                     continue
+                attempt_limit = _resolve_attempt_limit(attack_data, default_attempt)
                 for payload_param in attack_data['param']:
                     combined = payload.combinePayload(default_data[item], payload_param)
                     # Fix #3: skip if combinePayload returns the unchanged default
@@ -234,6 +263,7 @@ def _build_test_plan(methods, gs_service, temp_payloads,
                         'excepted_resp':  attack_data['resp'],
                         'exclude_resp':   attack_data.get('exclude', []),
                         'time_threshold': attack_data.get('time', 0),
+                        'attempt_limit':  attempt_limit,   # None = unlimited
                     })
     return test_cases
 
@@ -351,8 +381,7 @@ def generate_excel_result(results, meta):
             ("",                      ""),
             ("Timeout per Request",   f"{meta.get('timeout', 30)} s"),
             ("Delay per Request",     f"{meta.get('delay_ms', 0)} ms"),
-            ("Early Exit Threshold",  f"{meta.get('max_vuln_per_attack', 2)} vuln/attack"
-                                      if meta.get('max_vuln_per_attack', 0) > 0 else "disabled"),
+            ("Early Exit",            "per-attack (attemp_success in payloads.yaml)"),
             ("Proxy",                 meta.get('proxy', "None")),
             ("Auth Flow",             meta.get('auth_rpc') or "None"),
         ]
@@ -566,7 +595,7 @@ async def start_scan(
     test_plan = _build_test_plan(
         methods, gs_service, temp_payloads,
         attacks_filter=attacks_filter, services_filter=services_filter,
-        payloads_path=payloads_path,
+        payloads_path=payloads_path, default_attempt=max_vuln_per_attack,
     )
     total = len(test_plan)
     filter_note = ""
@@ -599,10 +628,15 @@ async def start_scan(
         print()
 
     # Phase 4: Execution
-    early_exit_note = (f" | early exit after {max_vuln_per_attack} vuln/attack"
-                       if max_vuln_per_attack > 0 else "")
+    # Early-exit limits are per-attack via 'attemp_success' in payloads.yaml
+    limited   = sorted({tc['attack'] for tc in test_plan if tc['attempt_limit'] is not None})
+    unlimited = sorted({tc['attack'] for tc in test_plan if tc['attempt_limit'] is None})
+    early_exit_note = " | early exit: per-attack (attemp_success)" if limited else ""
     print(f"{BOLD}[PHASE 4]{RESET} Executing tests...  "
           f"[timeout: {timeout}s/req{early_exit_note}]")
+    if unlimited:
+        print(f"  {DIM}[i] Unlimited attempts (attemp_success=null): "
+              f"{', '.join(unlimited)}{RESET}")
     print("-" * 64)
 
     current_service = None
@@ -628,9 +662,11 @@ async def start_scan(
             print(f"\n  {BOLD}>> {service.replace('Request','')}{RESET}"
                   f"  (params: {', '.join(tc['param_names'])})")
 
-        # Early exit: skip remaining payloads once threshold is reached for this group
+        # Early exit: skip remaining payloads once this attack's per-group limit is hit.
+        # attempt_limit is None => unlimited (attemp_success: none in payloads.yaml)
         group_key = (service, tc['param'], tc['attack'])
-        if max_vuln_per_attack > 0 and vuln_per_group.get(group_key, 0) >= max_vuln_per_attack:
+        limit     = tc['attempt_limit']
+        if limit is not None and vuln_per_group.get(group_key, 0) >= limit:
             skipped_count += 1
             if group_key not in skip_notified:
                 skip_notified.add(group_key)
@@ -640,7 +676,7 @@ async def start_scan(
                 )
                 if not quiet:
                     print(f"  {DIM}[->] Early exit: {tc['attack'].upper()} on "
-                          f"'{tc['param']}' — {max_vuln_per_attack} found, "
+                          f"'{tc['param']}' — {limit} success reached, "
                           f"skipping {remaining} remaining payload(s){RESET}")
             continue
 
